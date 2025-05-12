@@ -134,64 +134,10 @@ async def load_chat(uid: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/get_conversation_id/{uid}")
-async def get_conversation_id(uid: str):
-    try:
-        existing = await chat_history_collection.find_one({"uid": uid})
-        if existing:
-            return {"conversation_id": existing["conversation_id"]}
-        else:
-            new_id = str(uuid4())
-            return {"conversation_id": new_id}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/check_pending_exercises/{uid}")
-async def check_pending_exercises(uid: str):
-    try:
-        record = await plans_col.find_one({"uid": uid})
-        if not record or "exercise_plan" not in record:
-            return {"pending": []}
-
-        plan = record["exercise_plan"]
-        today = datetime.now().strftime("%Y-%m-%d")
-        pending = []
-
-        for week in plan:
-            for day in plan[week]:
-                for ex in plan[week][day]:
-                    completed = ex.get("Completed")
-                    completed_date = ex.get("CompletedDate")
-                    if not completed or completed_date != today:
-                        pending.append(ex["Exercises"])
-
-        return {"pending": pending}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    
-
-@app.get("/get_notifications/{uid}")
-async def get_notifications(uid: str):
-    try:
-        notifications = await db.notifications.find({"uid": uid, "seen": False}).to_list(length=100)
-        return {
-            "uid": uid,
-            "notifications": [
-                {
-                    "message": n["message"],
-                    "timestamp": n["timestamp"].strftime('%Y-%m-%d %H:%M:%S'),
-                    "seen": n["seen"]
-                } for n in notifications
-            ]
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-class PlanPayload(BaseModel):
-    exercise_plan: Dict  # Expecting the exercise plan as a dictionary
-
-
+from fastapi import FastAPI, HTTPException
+from typing import Dict
+from datetime import datetime
+from uuid import uuid4
 
 @app.get("/get_progress/{uid}")
 async def get_progress(uid: str):
@@ -215,24 +161,32 @@ async def get_progress(uid: str):
 
                     if completed and completed_date:
                         try:
+                            # Properly handle ISO datetime strings with time info
                             if isinstance(completed_date, str):
-                                dt = datetime.fromisoformat(completed_date)
+                                dt = datetime.fromisoformat(completed_date.split('T')[0])
                             elif isinstance(completed_date, datetime):
                                 dt = completed_date
                             else:
                                 dt = completed_date.to_datetime()
 
-                            day_key = dt.date().isoformat()
-                            daily_calories[day_key] = daily_calories.get(day_key, 0) + calories
+                            date_str = dt.strftime('%Y-%m-%d')
+                            daily_calories[date_str] = daily_calories.get(date_str, 0) + calories
+
                         except Exception as inner_e:
                             print(f"Error parsing date: {completed_date} -> {inner_e}")
 
-        sorted_days = sorted(daily_calories.items())
+        # Sort by date and format for bar chart
+        sorted_progress = sorted(daily_calories.items())  # (date, calories)
+
         progress = [
-            {"day": f"Day {i + 1}", "calories_burned": cal}
-            for i, (date, cal) in enumerate(sorted_days)
+            {
+                "date": date,  # e.g., '2025-05-12'
+                "calories_burned": calories
+            }
+            for date, calories in sorted_progress
         ]
 
+        print("Progress response:", progress)  # 🛠️ Debug print
         return {"progress": progress}
 
     except Exception as e:
