@@ -196,39 +196,57 @@ class PlanPayload(BaseModel):
 @app.get("/get_progress/{uid}")
 async def get_progress(uid: str):
     try:
+        print(f"Fetching progress for UID: {uid}")
+
         record = await plans_col.find_one({"uid": uid})
-        if not record or "exercise_plan" not in record:
+        if not record:
+            print("No record found.")
             return {"progress": []}
 
-        plan = record["exercise_plan"]
+        plan = record.get("exercise_plan")
+        if not plan:
+            print("No exercise_plan found.")
+            return {"progress": []}
+
+        print("Parsing exercise_plan...")
         daily_calories = {}
 
-        for week in plan.values():
-            for day in week.values():
-                for ex in day:
-                    if ex.get("Completed"):
-                        date = ex.get("CompletedDate")
-                        if date:
-                            # Convert string to date object if needed
-                            if isinstance(date, str):
-                                dt = datetime.strptime(date, "%Y-%m-%d")
-                            elif isinstance(date, datetime):
-                                dt = date
+        for week_key, week in plan.items():
+            print(f"Processing {week_key}")
+            for day_key, exercises in week.items():
+                print(f"  {day_key}: {len(exercises)} exercises")
+                for ex in exercises:
+                    completed = ex.get("Completed")
+                    completed_date = ex.get("CompletedDate")
+                    calories = ex.get("Calories", 0)
+
+                    if completed and completed_date:
+                        try:
+                            if isinstance(completed_date, str):
+                                dt = datetime.strptime(completed_date, "%Y-%m-%d")
+                            elif isinstance(completed_date, datetime):
+                                dt = completed_date
                             else:
-                                dt = date.to_datetime()  # in case it's BSON timestamp
+                                dt = completed_date.to_datetime()
 
                             day_key = dt.date().isoformat()
-                            calories = ex.get("Calories", 0)
                             daily_calories[day_key] = daily_calories.get(day_key, 0) + calories
+                        except Exception as inner_e:
+                            print(f"Error parsing date: {completed_date} -> {inner_e}")
 
-        # Sort days and assign "Day N"
+        # Sort and format output
         sorted_days = sorted(daily_calories.items())
         progress = [
             {"day": f"Day {i + 1}", "calories_burned": cal}
             for i, (date, cal) in enumerate(sorted_days)
         ]
 
+        print(f"Final progress: {progress}")
         return {"progress": progress}
 
     except Exception as e:
+        import traceback
+        print("Exception occurred:")
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
