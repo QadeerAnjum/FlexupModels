@@ -2,12 +2,12 @@ from typing import Any, Dict
 from fastapi import FastAPI, HTTPException
 from diet_model import get_meal_recommendations, users_collection
 from exercise_model import exercise_recommendations
-
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorClient
 from datetime import datetime
 from uuid import uuid4
-
+import pytz
 from pydantic import BaseModel
 from typing import Dict
 
@@ -33,6 +33,7 @@ class PlanPayload(BaseModel):
 async def upsert_plan(uid: str, payload: PlanPayload):
     try:
         print(f"Received payload for UID {uid}: {payload}")
+
         await plans_col.update_one(
             {"uid": uid},
             {"$set": {"exercise_plan": payload.exercise_plan}},
@@ -168,6 +169,65 @@ async def check_pending_exercises(uid: str):
         return {"pending": pending}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+@app.get("/get_notifications/{uid}")
+async def get_notifications(uid: str):
+    try:
+        notifications = await db.notifications.find({"uid": uid, "seen": False}).to_list(length=100)
+        return {
+            "uid": uid,
+            "notifications": [
+                {
+                    "message": n["message"],
+                    "timestamp": n["timestamp"].strftime('%Y-%m-%d %H:%M:%S'),
+                    "seen": n["seen"]
+                } for n in notifications
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 class PlanPayload(BaseModel):
     exercise_plan: Dict  # Expecting the exercise plan as a dictionary
+
+
+
+@app.get("/get_progress/{uid}")
+async def get_progress(uid: str):
+    try:
+        records = collection.find({"uid": uid, "Completed": True})
+        progress = []
+
+        async for record in records:
+            timestamp = record.get("CompletedDate")
+            calories = record.get("Calories", 0)
+
+            if timestamp:
+                # Convert timestamp to day index
+                dt = timestamp if isinstance(timestamp, datetime) else timestamp.to_datetime()
+                day_key = dt.date().isoformat()
+
+                existing = next((item for item in progress if item["day"] == day_key), None)
+                if existing:
+                    existing["calories_burned"] += calories
+                else:
+                    progress.append({
+                        "day": day_key,
+                        "calories_burned": calories
+                    })
+
+        # Optional: Sort and convert dates to "Day N"
+        progress.sort(key=lambda x: x["day"])
+        day_mapping = []
+        for i, entry in enumerate(progress):
+            day_name = f"Day {i + 1}"
+            day_mapping.append({
+                "day": day_name,
+                "calories_burned": entry["calories_burned"]
+            })
+
+        return {"progress": day_mapping}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
