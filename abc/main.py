@@ -196,38 +196,39 @@ class PlanPayload(BaseModel):
 @app.get("/get_progress/{uid}")
 async def get_progress(uid: str):
     try:
-        records = collection.find({"uid": uid, "Completed": True})
-        progress = []
+        record = await plans_col.find_one({"uid": uid})
+        if not record or "exercise_plan" not in record:
+            return {"progress": []}
 
-        async for record in records:
-            timestamp = record.get("CompletedDate")
-            calories = record.get("Calories", 0)
+        plan = record["exercise_plan"]
+        daily_calories = {}
 
-            if timestamp:
-                # Convert timestamp to day index
-                dt = timestamp if isinstance(timestamp, datetime) else timestamp.to_datetime()
-                day_key = dt.date().isoformat()
+        for week in plan.values():
+            for day in week.values():
+                for ex in day:
+                    if ex.get("Completed"):
+                        date = ex.get("CompletedDate")
+                        if date:
+                            # Convert string to date object if needed
+                            if isinstance(date, str):
+                                dt = datetime.strptime(date, "%Y-%m-%d")
+                            elif isinstance(date, datetime):
+                                dt = date
+                            else:
+                                dt = date.to_datetime()  # in case it's BSON timestamp
 
-                existing = next((item for item in progress if item["day"] == day_key), None)
-                if existing:
-                    existing["calories_burned"] += calories
-                else:
-                    progress.append({
-                        "day": day_key,
-                        "calories_burned": calories
-                    })
+                            day_key = dt.date().isoformat()
+                            calories = ex.get("Calories", 0)
+                            daily_calories[day_key] = daily_calories.get(day_key, 0) + calories
 
-        # Optional: Sort and convert dates to "Day N"
-        progress.sort(key=lambda x: x["day"])
-        day_mapping = []
-        for i, entry in enumerate(progress):
-            day_name = f"Day {i + 1}"
-            day_mapping.append({
-                "day": day_name,
-                "calories_burned": entry["calories_burned"]
-            })
+        # Sort days and assign "Day N"
+        sorted_days = sorted(daily_calories.items())
+        progress = [
+            {"day": f"Day {i + 1}", "calories_burned": cal}
+            for i, (date, cal) in enumerate(sorted_days)
+        ]
 
-        return {"progress": day_mapping}
+        return {"progress": progress}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
