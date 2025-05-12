@@ -32,6 +32,7 @@ class PlanPayload(BaseModel):
 @app.post("/save_exercise_plan/{uid}")
 async def upsert_plan(uid: str, payload: PlanPayload):
     try:
+        print(f"Received payload for UID {uid}: {payload}")
         await plans_col.update_one(
             {"uid": uid},
             {"$set": {"exercise_plan": payload.exercise_plan}},
