@@ -8,6 +8,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from datetime import datetime
 from uuid import uuid4
 
+from pydantic import BaseModel
+from typing import Dict
+
 client = AsyncIOMotorClient("mongodb+srv://fahad:fahad_123@cluster0.bwyuy.mongodb.net/test?retryWrites=true&w=majority&appName=Cluster0")
 db = client.test
 chat_history_collection = db.chat_history
@@ -164,3 +167,6 @@ async def check_pending_exercises(uid: str):
         return {"pending": pending}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+class PlanPayload(BaseModel):
+    exercise_plan: Dict  # Expecting the exercise plan as a dictionary
