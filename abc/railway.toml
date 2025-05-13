@@ -5,5 +5,5 @@ command = "pip install -r requirements.txt"
 command = "python main.py"
 
 [[crons]]
-schedule = "15 16 * * *" # UTC time for 9:15 PM PKT
+schedule = "25 16 * * *" # UTC time for 9:25 PM PKT
 command = "python worker.py"
