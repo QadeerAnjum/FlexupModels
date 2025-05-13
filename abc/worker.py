@@ -39,7 +39,7 @@ def check_and_notify_users():
         if not fcm_token:
             continue
 
-        user_data = collection.find_one({"_id": uid})
+        user_data = collection.find_one({"uid": uid})
         if not user_data:
             continue
 
