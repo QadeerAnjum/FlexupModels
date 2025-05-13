@@ -1,57 +1,35 @@
+import logging
 from typing import Any, Dict
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException   #fastapi is a framework used to build apis in python
 from diet_model import get_meal_recommendations, users_collection
 from exercise_model import exercise_recommendations
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from motor.motor_asyncio import AsyncIOMotorClient
+from calorie_burn import estimate_calories_burned
+
+from pydantic import BaseModel 
+from motor.motor_asyncio import AsyncIOMotorClient   #to interact with mongoDB
 from datetime import datetime
-from uuid import uuid4
-import pytz
-from pydantic import BaseModel
-from typing import Dict
+from uuid import uuid4   #gives a 129 bit unique id for each convo 8,4,4,4,12 format in hexadecimal
 
 client = AsyncIOMotorClient("mongodb+srv://fahad:fahad_123@cluster0.bwyuy.mongodb.net/test?retryWrites=true&w=majority&appName=Cluster0")
 db = client.test
 chat_history_collection = db.chat_history
-plans_col = db.recommended_exercise
+plans_collection = db.recommended_exercise
+questionnaire_collection = db['questions']
 
-app = FastAPI()
+
+app = FastAPI()     #initialize the app to get routes
 
 # Chat message model
 class ChatMessage(BaseModel):
-    uid: str
+    uid : str
     conversation_id: str
     role: str
     text: str
     timestamp: datetime = datetime.utcnow()
-
+  
 class PlanPayload(BaseModel):
     exercise_plan: Dict[str, Any]
 
-@app.post("/save_exercise_plan/{uid}")
-async def upsert_plan(uid: str, payload: PlanPayload):
-    try:
-        print(f"Received payload for UID {uid}: {payload}")
-
-        await plans_col.update_one(
-            {"uid": uid},
-            {"$set": {"exercise_plan": payload.exercise_plan}},
-            upsert=True
-        )
-        return {"status": "ok"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/get_exercise_status/{uid}")
-async def get_exercise_status(uid: str):
-    try:
-        record = await plans_col.find_one({"uid": uid})
-        if not record:
-            return {"uid": uid, "exercise_plan": None}
-        return {"uid": uid, "exercise_plan": record.get("exercise_plan", None)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/recommend_meal/{uid}")
 def recommend_meals(uid: str):
@@ -65,6 +43,7 @@ def recommend_meals(uid: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/recommend_exercise/{uid}")
 def recommend_exercise(uid: str):
@@ -91,7 +70,7 @@ async def save_chat_message(chat_message: ChatMessage):
         result = await chat_history_collection.update_one(
             {"conversation_id": chat_message.conversation_id},
             {
-                "$setOnInsert": {
+                "$setOnInsert": {   #make sure email and convo_id is set only once
                     "uid": chat_message.uid,
                     "conversation_id": chat_message.conversation_id
                 },
@@ -113,7 +92,7 @@ async def load_chat(uid: str):
     try:
         convo = await chat_history_collection.find_one({"uid": uid})
         if not convo or "messages" not in convo:
-            return {"uid": uid, "chat_messages": []}
+            return {"uid": uid, "chat_messages": []}  #if no meesages, return empty
 
         sorted_messages = sorted(
             convo["messages"],
@@ -129,66 +108,98 @@ async def load_chat(uid: str):
             for msg in sorted_messages
         ]
 
-        return {"uid": uid, "chat_messages": chat_messages}
+        return {"uid": uid, "chat_messages": chat_messages}  #return messages according to timestamp
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-from fastapi import FastAPI, HTTPException
-from typing import Dict
-from datetime import datetime
-from uuid import uuid4
+@app.get("/get_conversation_id/{uid}")
+async def get_conversation_id(uid: str):
+    try:
+        existing = await chat_history_collection.find_one({"uid": uid})
+        if existing:
+            return {"conversation_id": existing["conversation_id"]}
+        else:
+            new_id = str(uuid4())
+            return {"conversation_id": new_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/save_exercise_plan/{uid}")
+async def upsert_plan(uid: str, payload: PlanPayload):
+    try:
+        # 1) Fetch user weight
+        user_doc = await questionnaire_collection.find_one({"UID": uid})
+        if not user_doc:
+            raise HTTPException(404, "User questionnaire not found")
+        weight = user_doc.get("Weight", 70)
+
+        # 2) Copy and inject calories into each exercise
+        updated_plan = {}
+        for week, week_data in payload.exercise_plan.items():
+            updated_plan[week] = {}
+            for day, exercises in week_data.items():
+                updated_exs = []
+                for ex in exercises:
+                    try:
+                        name = ex["Exercises"]
+                        sets = int(ex["Sets"])
+                        reps = str(ex["Repetition"])
+                    except KeyError as ke:
+                        logging.error(f"Missing key {ke} in exercise doc: {ex}")
+                        raise HTTPException(400, f"Malformed exercise entry: missing {ke}")
+
+                    cal = estimate_calories_burned(name, sets, reps, weight)
+                    ex["calories_burned"] = cal
+                    updated_exs.append(ex)
+
+                updated_plan[week][day] = updated_exs
+
+        # 3) Upsert into Mongo
+        plans_collection.update_one(
+            {"uid": uid},
+            {"$set": {"exercise_plan": updated_plan}},
+            upsert=True
+        )
+        return {"status": "ok"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.exception("Failed to save exercise plan")
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
+@app.get("/get_exercise_status/{uid}")
+async def get_exercise_status(uid: str):
+    user_data = await plans_collection.find_one({"uid": uid}, {"_id": 0, "exercise_plan": 1})
+    if not user_data:
+        raise HTTPException(status_code=404, detail="Exercise plan not found for user")
+
+    return user_data
 
 @app.get("/get_progress/{uid}")
 async def get_progress(uid: str):
     try:
-        record = await plans_col.find_one({"uid": uid})
-        if not record:
+        user_data = await plans_collection.find_one({"uid": uid})
+        if not user_data or "exercise_plan" not in user_data:
             return {"progress": []}
 
-        plan = record.get("exercise_plan")
-        if not plan:
-            return {"progress": []}
-
-        daily_calories = {}
-
-        for week in plan.values():
-            for day in week.values():
-                for ex in day:
-                    completed = ex.get("Completed")
-                    completed_date = ex.get("CompletedDate")
-                    exercise_name = ex.get("Exercises")
-
-                    if completed and completed_date and exercise_name:
-                        try:
-                            # Parse the completed date
-                            if isinstance(completed_date, str):
-                                dt = datetime.fromisoformat(completed_date.split('T')[0])
-                            elif isinstance(completed_date, datetime):
-                                dt = completed_date
-                            else:
-                                dt = completed_date.to_datetime()
-
-                            # 🟢 Fetch calories from recommended_exercise collection
-                            rec_ex = await recommended_exercise_col.find_one({"Exercises": exercise_name})
-                            calories = rec_ex.get("Calories", 0) if rec_ex else 0
-
-                            date_str = dt.strftime('%Y-%m-%d')
-                            daily_calories[date_str] = daily_calories.get(date_str, 0) + calories
-
-                        except Exception as inner_e:
-                            print(f"Error parsing or looking up calories: {completed_date} ({exercise_name}) -> {inner_e}")
-
-        # Format result for frontend chart
-        sorted_progress = sorted(daily_calories.items())
-        progress = [
-            {"date": date, "calories_burned": calories}
-            for date, calories in sorted_progress
-        ]
-
-        print("Progress response:", progress)
+        progress = []
+        for week_key, week_value in user_data["exercise_plan"].items():
+            for day_key, day_value in week_value.items():
+                for ex in day_value:
+                    if ex.get("Completed") and ex.get("calories_burned"):
+                        progress.append({
+                            "week": week_key,
+                            "day": day_key,
+                            "exercise": ex["Exercises"],
+                            "calories_burned": ex["calories_burned"]
+                        })
         return {"progress": progress}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
