@@ -157,11 +157,11 @@ async def get_progress(uid: str):
                 for ex in day:
                     completed = ex.get("Completed")
                     completed_date = ex.get("CompletedDate")
-                    calories = ex.get("Calories", 0)
+                    exercise_name = ex.get("Exercises")
 
-                    if completed and completed_date:
+                    if completed and completed_date and exercise_name:
                         try:
-                            # Properly handle ISO datetime strings with time info
+                            # Parse the completed date
                             if isinstance(completed_date, str):
                                 dt = datetime.fromisoformat(completed_date.split('T')[0])
                             elif isinstance(completed_date, datetime):
@@ -169,25 +169,26 @@ async def get_progress(uid: str):
                             else:
                                 dt = completed_date.to_datetime()
 
+                            # 🟢 Fetch calories from recommended_exercise collection
+                            rec_ex = await recommended_exercise_col.find_one({"Exercises": exercise_name})
+                            calories = rec_ex.get("Calories", 0) if rec_ex else 0
+
                             date_str = dt.strftime('%Y-%m-%d')
                             daily_calories[date_str] = daily_calories.get(date_str, 0) + calories
 
                         except Exception as inner_e:
-                            print(f"Error parsing date: {completed_date} -> {inner_e}")
+                            print(f"Error parsing or looking up calories: {completed_date} ({exercise_name}) -> {inner_e}")
 
-        # Sort by date and format for bar chart
-        sorted_progress = sorted(daily_calories.items())  # (date, calories)
-
+        # Format result for frontend chart
+        sorted_progress = sorted(daily_calories.items())
         progress = [
-            {
-                "date": date,  # e.g., '2025-05-12'
-                "calories_burned": calories
-            }
+            {"date": date, "calories_burned": calories}
             for date, calories in sorted_progress
         ]
 
-        print("Progress response:", progress)  # 🛠️ Debug print
+        print("Progress response:", progress)
         return {"progress": progress}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
