@@ -1,0 +1,9 @@
+[build]
+command = "pip install -r requirements.txt"
+
+[deploy]
+command = "python main.py"
+
+[[crons]]
+schedule = "0 15 * * *" # UTC time for 8 PM PKT
+command = "python worker.py"

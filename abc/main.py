@@ -201,5 +201,17 @@ async def get_progress(uid: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+#Backend Endpoint to dave FCM token
 
+@app.post("/save_fcm_token/{user_id}")
+async def save_fcm_token(user_id: str, data: dict):
+    token = data.get("token")
+    if token:
+        await users_collection.update_one(
+            {"_id": user_id},
+            {"$set": {"fcm_token": token}},
+            upsert=True
+        )
+    return {"message": "Token saved"}
 

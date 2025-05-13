@@ -6,3 +6,5 @@ pymongo
 pandas
 scikit-learn
 
+firebase-admin
+pytz
