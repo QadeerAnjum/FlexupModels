@@ -5,6 +5,7 @@ pydantic
 pymongo
 pandas
 scikit-learn
-
+python-multipart
+asyncio
 firebase-admin
 pytz
